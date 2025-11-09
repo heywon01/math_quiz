@@ -600,8 +600,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const optionPromises = validOptionDivs.map(div => {
-                const text = div.querySelector('.option-text').value;
-                const imageFile = div.querySelector('.option-image-upload').files[0];
+                const text = div.querySelector('.option-text')?.value || ''; 
+                const imageFile = div.querySelector('.option-image-upload')?.files[0];
                 return readFileAsDataURL(imageFile).then(image => ({ text, image }));
             });
 
