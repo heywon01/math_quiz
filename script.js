@@ -631,7 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             problems.push(newProblem);
             saveData(); // 문제 추가 후 데이터 저장
-            showCustomAlert('문제 추가 완료');
+            await showCustomAlert('문제 추가 완료');
             showMainView('problems');
             renderProblems();
         } catch (error) {
