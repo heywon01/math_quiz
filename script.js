@@ -3,56 +3,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let users = [];
     let problems = [];
     let currentUser = null;
-    // 관리자 전용 정보
-    const ADMIN_ID = '1234aa';
-    const ADMIN_PASSWORD = 'wj211@';
-
-    // 로컬 스토리지에서 데이터 로드
-    const loadData = () => {
-        try {
-            const storedUsers = localStorage.getItem('users');
-            const storedProblems = localStorage.getItem('problems');
-            if (storedUsers) {
-                users = JSON.parse(storedUsers);
-            }
-            // 기존 관리자 계정은 users 배열에 없어도 인증 모달에서만 사용됨
-            // 하지만 기존 사용자 데이터의 연속성을 위해 초기 관리자 계정 유무 로직은 유지
-            if (!users.some(u => u.id === ADMIN_ID)) {
-                 users.push({ id: ADMIN_ID, password: ADMIN_PASSWORD, name: '관리자', isAdmin: true });
-            }
-            if (storedProblems) {
-                problems = JSON.parse(storedProblems);
-            }
-        } catch (e) {
-            console.error("Failed to load data from localStorage", e);
-            users = [{ id: ADMIN_ID, password: ADMIN_PASSWORD, name: '관리자', isAdmin: true }];
-            problems = [];
-        }
-        // 관리자 계정은 항상 users 배열에 있도록 보장
-        //if (!users.find(u => u.id === ADMIN_ID)) {
-             //users.push({ id: ADMIN_ID, password: ADMIN_PASSWORD, name: '관리자', isAdmin: true });
-             //saveData();
-        //}
-    };
     
-    // 로컬 스토리지에 데이터 저장
-    const saveData = () => {
-        try {
-            localStorage.setItem('users', JSON.stringify(users.filter(u => u.id !== ADMIN_ID || u.isAdmin))); // 관리자 계정은 저장 시점에 user.isAdmin: true인 상태로 저장되도록
-            localStorage.setItem('problems', JSON.stringify(problems));
-        } catch (e) {
-            console.error("Failed to save data to localStorage", e);
-        }
-    };
+    // API 통신 기본 경로 설정
+    const API_BASE_URL = '/api'; 
 
-    // 초기 데이터 로드
-    loadData();
+    // **[추가]** 로딩 오버레이 제어 (HTML에 해당 요소가 있다고 가정)
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const showLoading = () => loadingOverlay ? loadingOverlay.classList.remove('hidden') : null;
+    const hideLoading = () => loadingOverlay ? loadingOverlay.classList.add('hidden') : null;
 
-    // ===== DOM 요소 선택 =====
+    // ===== DOM 요소 선택 (기존과 동일) =====
     const screens = {
-        // **[수정]** 이름 입력 화면 추가
         nameInput: document.getElementById('name-input-screen'),
-        // 기존 로그인/회원가입 화면은 hidden 처리
         login: document.getElementById('login-screen'), 
         signup: document.getElementById('signup-screen'),
         main: document.getElementById('main-app-screen'),
@@ -63,16 +25,11 @@ document.addEventListener('DOMContentLoaded', () => {
         addProblem: document.getElementById('add-problem-view'),
         account: document.getElementById('account-view'),
     };
-    // **[추가]** 이름 입력 폼
     const nameInputForm = document.getElementById('name-input-form');
-    // **[삭제]** loginForm, signupForm 대신 사용
-    // const loginForm = document.getElementById('login-form');
-    // const signupForm = document.getElementById('signup-form');
     
     const problemModal = document.getElementById('problem-modal');
     const addProblemForm = document.getElementById('add-problem-form');
     const accountEditForm = document.getElementById('account-edit-form');
-    // **[추가]** 관리자 인증 모달
     const adminAuthModal = document.getElementById('admin-auth-modal');
     const adminAuthForm = document.getElementById('admin-auth-form');
     
@@ -83,9 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cancelBtn: document.getElementById('custom-modal-cancel'),
     };
 
-    // ===== 유틸리티 함수 =====
-    // showCustomAlert, showCustomConfirm, readFileAsDataURL 함수는 기존과 동일하게 유지
-
+    // ===== 유틸리티 함수 (기존과 동일) =====
     const showCustomAlert = (message) => {
         return new Promise((resolve) => {
             customModal.message.textContent = message;
@@ -107,6 +62,11 @@ document.addEventListener('DOMContentLoaded', () => {
             customModal.cancelBtn.classList.remove('hidden');
             customModal.overlay.classList.remove('hidden');
             
+            const cleanup = () => {
+                customModal.okBtn.removeEventListener('click', okListener);
+                customModal.cancelBtn.removeEventListener('click', cancelListener);
+            }
+            
             const okListener = () => {
                 customModal.overlay.classList.add('hidden');
                 cleanup();
@@ -118,11 +78,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 cleanup();
                 resolve(false);
             };
-            
-            const cleanup = () => {
-                customModal.okBtn.removeEventListener('click', okListener);
-                customModal.cancelBtn.removeEventListener('click', cancelListener);
-            }
             
             customModal.okBtn.addEventListener('click', okListener);
             customModal.cancelBtn.addEventListener('click', cancelListener);
@@ -141,8 +96,60 @@ document.addEventListener('DOMContentLoaded', () => {
             reader.readAsDataURL(file);
         });
     };
+    
+    // **[추가]** API 호출 함수
+    /**
+     * 모든 문제 데이터를 서버에서 가져옵니다.
+     */
+    const fetchProblems = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/problems`);
+            if (!response.ok) {
+                throw new Error('문제 목록 로드 실패');
+            }
+            // 서버에서 받아온 problems 배열로 전역 변수 업데이트
+            problems = await response.json(); 
+        } catch (error) {
+            console.error('Error fetching problems:', error);
+            await showCustomAlert('문제 데이터를 가져오는 데 실패했습니다.');
+        }
+    };
 
-    // ===== 화면 전환 함수 =====
+    /**
+     * 모든 사용자 데이터를 서버에서 가져옵니다. (리더보드용)
+     */
+    const fetchUsers = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/users`);
+            if (!response.ok) {
+                throw new Error('사용자 목록 로드 실패');
+            }
+            users = await response.json();
+        } catch (error) {
+            console.error('Error fetching users:', error);
+            // 사용자 명단 로드 실패는 치명적이지 않으므로 경고만 표시
+        }
+    };
+    
+    // **[추가]** 현재 사용자 정보를 서버에서 최신화
+    const updateCurrentUser = async () => {
+        if (!currentUser || !currentUser._id) return;
+        try {
+             const response = await fetch(`${API_BASE_URL}/users/${currentUser._id}`);
+             if (response.ok) {
+                 const userData = await response.json();
+                 currentUser = { ...currentUser, ...userData }; // 최신 정보로 덮어쓰기
+                 localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                 document.getElementById('user-name-display').textContent = currentUser.name;
+                 updateAdminUI();
+             }
+        } catch (error) {
+            console.error('Error updating current user:', error);
+        }
+    }
+
+
+    // ===== 화면 전환 함수 (기존과 동일) =====
     const showScreen = (screenName) => {
         Object.values(screens).forEach(screen => screen.classList.add('hidden'));
         screens[screenName].classList.remove('hidden');
@@ -153,27 +160,27 @@ document.addEventListener('DOMContentLoaded', () => {
         mainViews[viewName].classList.remove('hidden');
     };
     
-    // **[추가]** 관리자 화면 요소 표시/숨김
+    // **[기존과 동일]** 관리자 화면 요소 표시/숨김
     const updateAdminUI = () => {
         const adminButton = document.getElementById('nav-add-problem');
         const adminAuthButton = document.getElementById('nav-admin-auth');
         
         if (currentUser && currentUser.isAdmin) {
             adminButton.classList.remove('hidden');
-            adminAuthButton.classList.add('hidden'); // 관리자면 인증 버튼 숨김
+            adminAuthButton.classList.add('hidden'); 
         } else {
             adminButton.classList.add('hidden');
-            adminAuthButton.classList.remove('hidden'); // 일반 사용자면 인증 버튼 표시
+            adminAuthButton.classList.remove('hidden'); 
         }
     };
 
     // ===== 렌더링 함수 =====
-    // renderProblems, renderUsers, renderCalendar 함수는 기존과 동일하게 유지
 
     const renderProblems = (filterDate = null) => {
         const container = document.getElementById('problem-cards-container');
         container.innerHTML = '';
         
+        // **[수정]** 로컬 id 대신 date를 사용
         const problemsToRender = filterDate 
             ? problems.filter(p => p.date === filterDate)
             : problems;
@@ -187,12 +194,15 @@ document.addEventListener('DOMContentLoaded', () => {
              return;
         }
 
-        problemsToRender.sort((a, b) => b.id - a.id).forEach(problem => {
+        // **[수정]** date 기준 정렬
+        problemsToRender.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(problem => {
             const card = document.createElement('div');
             card.className = 'relative bg-gray-50 p-6 rounded-xl shadow-md hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-pointer';
-            card.dataset.problemId = problem.id;
+            // **[수정]** problem.id 대신 problem.date 사용
+            card.dataset.problemDate = problem.date;
             
             let contentHTML = '';
+            // **[수정]** problem.question이 JSON 객체라고 가정 (서버에서 파싱 후 전송)
             if (problem.question.text) {
                 contentHTML += `<p class="text-lg font-semibold truncate">${problem.question.text}</p>`;
             }
@@ -203,7 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let adminControls = '';
             if (currentUser && currentUser.isAdmin) {
                 adminControls = `
-                    <button class="delete-problem-btn absolute top-2 right-2 text-red-500 hover:text-red-700 p-1 bg-white bg-opacity-70 rounded-full" data-problem-id="${problem.id}">
+                    <button class="delete-problem-btn absolute top-2 right-2 text-red-500 hover:text-red-700 p-1 bg-white bg-opacity-70 rounded-full" data-problem-date="${problem.date}">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" />
                         </svg>
@@ -214,14 +224,15 @@ document.addEventListener('DOMContentLoaded', () => {
             card.innerHTML = `
                 ${contentHTML}
                 <div class="text-sm text-gray-500 mt-4 flex justify-between items-center">
-                    <span>ID: ${problem.id}</span>
+                    <span>날짜: ${problem.date}</span>
                     <span>푼 사람: ${problem.solvers.length}명</span>
                 </div>
                 ${adminControls}
             `;
             card.addEventListener('click', (e) => {
                 if (e.target.closest('.delete-problem-btn')) return;
-                openProblemModal(problem.id)
+                // **[수정]** problem.id 대신 problem.date 사용
+                openProblemModal(problem.date)
             });
             container.appendChild(card);
         });
@@ -230,13 +241,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderUsers = () => {
         const container = document.getElementById('user-list-container');
         container.innerHTML = '';
-        users.filter(u => !u.isAdmin).forEach(user => { // 관리자(1234aa)는 명단에 표시하지 않음
+        // **[수정]** users 배열이 서버에서 로드된 상태라고 가정
+        users.filter(u => !u.isAdmin).forEach(user => { 
             const li = document.createElement('li');
             li.className = 'bg-gray-50 p-4 rounded-lg flex justify-between items-center';
             li.innerHTML = `
                 <div>
                     <span class="font-semibold">${user.name}</span>
-                    <span class="text-gray-500 text-sm ml-2">(${user.id})</span>
+                    <span class="text-gray-500 text-sm ml-2">(${user.score}점)</span>
                 </div>
                 ${user.isAdmin ? '<span class="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">관리자</span>' : ''}
             `;
@@ -244,6 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
     
+    // renderCalendar 함수는 문제 조회 시 problem.date를 사용하도록 수정되었습니다.
     const renderCalendar = (year, month) => {
          const container = document.getElementById('calendar-container');
          container.innerHTML = '';
@@ -292,7 +305,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     // pass
                 } else {
                     const cellDate = new Date(year, month, dateNum);
-                    // 날짜가 하루씩 밀리는 문제 해결
                     const dateStr = `${cellDate.getFullYear()}-${String(cellDate.getMonth() + 1).padStart(2, '0')}-${String(cellDate.getDate()).padStart(2, '0')}`;
                     const hasProblem = problems.some(p => p.date === dateStr);
                     
@@ -322,7 +334,8 @@ document.addEventListener('DOMContentLoaded', () => {
                        const li = document.createElement('li');
                        li.className = 'p-3 bg-gray-100 rounded-md cursor-pointer hover:bg-gray-200';
                        li.textContent = p.question.text || '이미지 문제';
-                       li.addEventListener('click', () => openProblemModal(p.id));
+                       // **[수정]** 문제 열 때 date 사용
+                       li.addEventListener('click', () => openProblemModal(p.date));
                        list.appendChild(li);
                     });
                     calendarProblemsDisplay.appendChild(list);
@@ -336,8 +349,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ===== 이벤트 핸들러 =====
 
-    // **[추가]** 이름 입력 처리 (기존 로그인/회원가입 대체)
-    nameInputForm.addEventListener('submit', (e) => {
+    // **[핵심 수정]** 이름 입력 처리 (서버 통신)
+    nameInputForm.addEventListener('submit', async (e) => { // async 키워드 추가
         e.preventDefault();
         const name = document.getElementById('user-name').value.trim();
 
@@ -346,97 +359,129 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // 간단한 사용자 ID 생성 (현재 시간 기반)
-        const id = 'user' + Date.now(); 
-        
-        currentUser = { id, password: '', name, isAdmin: false };
+        showLoading(); // 로딩 시작
 
-        // 기존 사용자인지 확인 (이름으로)
-        let existingUser = users.find(u => u.name === name && !u.isAdmin);
-        if (existingUser) {
-            // 이미 있는 이름이면 해당 사용자 정보로 업데이트하고 사용
-            currentUser = existingUser;
-        } else {
-            // 새 사용자면 추가
-            users.push(currentUser);
-            saveData();
+        try {
+            // 서버 API 호출: 사용자 로그인/등록
+            const response = await fetch(`${API_BASE_URL}/users/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || '로그인/등록 실패');
+            }
+
+            const userData = await response.json();
+            currentUser = userData; // 서버에서 받은 사용자 정보로 업데이트 (MongoDB _id 포함)
+            
+            // 로컬 스토리지에 사용자의 MongoDB _id를 포함한 데이터 저장
+            localStorage.setItem('currentUser', JSON.stringify(currentUser)); 
+            
+            document.getElementById('user-name-display').textContent = currentUser.name;
+            updateAdminUI(); 
+            showScreen('main');
+            showMainView('problems');
+            
+            // 문제와 사용자 명단도 서버에서 로드
+            await fetchProblems(); 
+            await fetchUsers(); 
+            
+            const today = new Date();
+            renderProblems();
+            renderCalendar(today.getFullYear(), today.getMonth());
+            nameInputForm.reset();
+
+        } catch (error) {
+            console.error('로그인/등록 오류:', error);
+            await showCustomAlert(`로그인/등록 실패: ${error.message}`);
+        } finally {
+            hideLoading(); // 로딩 종료
         }
-
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-        
-        document.getElementById('user-name-display').textContent = currentUser.name;
-        updateAdminUI(); // 관리자 UI 업데이트
-        showScreen('main');
-        showMainView('problems');
-        const today = new Date();
-        renderProblems();
-        renderCalendar(today.getFullYear(), today.getMonth());
-        nameInputForm.reset();
     });
 
-    // 로그아웃 처리
+    // 로그아웃 처리 (기존과 동일)
     document.getElementById('logout-button').addEventListener('click', () => {
         currentUser = null;
         localStorage.removeItem('currentUser');
-        showScreen('nameInput'); // 로그아웃 후 이름 입력 화면으로 이동
+        showScreen('nameInput'); 
     });
 
-    // **[추가]** 관리자 인증 버튼 이벤트 리스너
-    document.getElementById('nav-admin-auth').addEventListener('click', () => {
-        adminAuthModal.classList.remove('hidden');
-        document.getElementById('admin-auth-error').classList.add('hidden');
-        adminAuthForm.reset();
-    });
-    
-    // **[추가]** 관리자 인증 취소 버튼 이벤트 리스너
-    document.getElementById('cancel-admin-auth').addEventListener('click', () => {
-        adminAuthModal.classList.add('hidden');
-    });
-
-    // **[추가]** 관리자 인증 폼 제출 처리
+    // **[수정]** 관리자 인증 폼 제출 처리 (서버 통신)
     adminAuthForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const id = document.getElementById('admin-id').value;
         const password = document.getElementById('admin-password').value;
         const errorMsg = document.getElementById('admin-auth-error');
 
-        if (id === ADMIN_ID && password === ADMIN_PASSWORD) {
-            // 인증 성공
-            adminAuthModal.classList.add('hidden');
-            
-            // 현재 사용자를 관리자로 업데이트
-            currentUser.isAdmin = true;
-            
-            // users 배열에 있는 현재 사용자 정보도 업데이트
-            const userInDb = users.find(u => u.id === currentUser.id && u.name === currentUser.name && !u.isAdmin);
-            if(userInDb) {
-                 userInDb.isAdmin = true;
-            } 
-            
-            saveData(); 
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            
-            updateAdminUI(); // 관리자 UI (문제 추가 버튼) 표시
-            await showCustomAlert('관리자 인증이 완료되었습니다.');
-            renderProblems(); // 문제 목록 새로고침 (삭제 버튼 표시)
+        showLoading(); // 로딩 시작
 
-        } else {
-            // 인증 실패
+        try {
+            const response = await fetch(`${API_BASE_URL}/admin/auth`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, password, currentUserId: currentUser._id }) // 현재 사용자 _id 전송
+            });
+
+            if (response.ok) {
+                // 인증 성공. 서버에서 관리자로 업데이트된 사용자 정보 수신
+                const adminData = await response.json();
+                
+                currentUser = { ...currentUser, ...adminData }; // 현재 사용자 정보 업데이트
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                
+                adminAuthModal.classList.add('hidden');
+                updateAdminUI(); 
+                await showCustomAlert('관리자 인증이 완료되었습니다.');
+                renderProblems(); 
+                errorMsg.classList.add('hidden');
+            } else {
+                 // 인증 실패
+                const errorText = await response.text();
+                errorMsg.textContent = errorText || 'ID 또는 비밀번호가 일치하지 않습니다.';
+                errorMsg.classList.remove('hidden');
+            }
+
+        } catch (error) {
+            console.error('관리자 인증 오류:', error);
+            errorMsg.textContent = '인증 중 오류가 발생했습니다.';
             errorMsg.classList.remove('hidden');
+        } finally {
+             hideLoading(); // 로딩 종료
         }
     });
 
+    // **[기존과 동일]** 관리자 인증 취소 버튼 이벤트 리스너
+    document.getElementById('cancel-admin-auth').addEventListener('click', () => {
+        adminAuthModal.classList.add('hidden');
+    });
+    
+    // **[기존과 동일]** 관리자 인증 버튼 이벤트 리스너
+    document.getElementById('nav-admin-auth').addEventListener('click', () => {
+        adminAuthModal.classList.remove('hidden');
+        document.getElementById('admin-auth-error').classList.add('hidden');
+        adminAuthForm.reset();
+    });
 
-    // 네비게이션
-    document.getElementById('nav-problems').addEventListener('click', () => {
+
+    // 네비게이션 (문제/사용자 목록 로드 시 서버에서 데이터 패치 추가)
+    document.getElementById('nav-problems').addEventListener('click', async () => {
+        showLoading();
+        await fetchProblems(); // 서버에서 최신 문제 목록 로드
         showMainView('problems');
         renderProblems();
         const today = new Date();
         renderCalendar(today.getFullYear(), today.getMonth());
+        hideLoading();
     });
-    document.getElementById('nav-users').addEventListener('click', () => {
+    document.getElementById('nav-users').addEventListener('click', async () => {
+        showLoading();
+        await fetchUsers(); // 서버에서 최신 사용자 목록 로드
         showMainView('users');
         renderUsers();
+        hideLoading();
     });
     document.getElementById('nav-add-problem').addEventListener('click', () => {
         if (!currentUser || !currentUser.isAdmin) {
@@ -451,31 +496,51 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('edit-name').value = currentUser.name;
     });
 
-    // 계정 정보 수정
+    // 계정 정보 수정 (서버 통신 필요)
     accountEditForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const newName = document.getElementById('edit-name').value;
         
-        // 관리자 ID로 로그인한 경우를 제외하고 이름 변경
-        const userInDb = users.find(u => u.id === currentUser.id && !u.isAdmin);
-        if(userInDb) {
-            userInDb.name = newName;
-            currentUser.name = newName;
+        if (newName === currentUser.name) {
+             showMainView('problems');
+             return;
+        }
+
+        showLoading();
+
+        try {
+            // **[추가]** 서버 API 호출: 사용자 이름 업데이트
+            const response = await fetch(`${API_BASE_URL}/users/${currentUser._id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || '이름 변경 실패');
+            }
+            
+            const updatedUser = await response.json();
+
+            // 클라이언트 상태 업데이트
+            currentUser.name = updatedUser.name;
             document.getElementById('user-name-display').textContent = currentUser.name;
-            saveData(); // 계정 정보 변경 후 데이터 저장
             localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            
             await showCustomAlert('이름이 변경되었습니다.');
             showMainView('problems');
-        } else if (currentUser.isAdmin && currentUser.id === ADMIN_ID) {
-            await showCustomAlert('관리자 계정의 이름은 변경할 수 없습니다.');
-            document.getElementById('edit-name').value = currentUser.name; // 원복
-        } else {
-             await showCustomAlert('사용자 정보를 찾을 수 없습니다.');
+
+        } catch (error) {
+            console.error('계정 정보 수정 오류:', error);
+            await showCustomAlert(error.message || '이름 변경 중 오류 발생');
+        } finally {
+            hideLoading();
         }
     });
     document.getElementById('cancel-edit-account').addEventListener('click', () => showMainView('problems'));
 
-    // 문제 삭제 처리 (이벤트 위임)
+    // 문제 삭제 처리 (이벤트 위임 - 서버 통신 필요)
     document.getElementById('problem-cards-container').addEventListener('click', async (e) => {
         const deleteBtn = e.target.closest('.delete-problem-btn');
         if (deleteBtn) {
@@ -484,22 +549,42 @@ document.addEventListener('DOMContentLoaded', () => {
                  await showCustomAlert('관리자만 문제를 삭제할 수 있습니다.');
                  return;
             }
-            const problemId = parseInt(deleteBtn.dataset.problemId, 10);
-            const confirmed = await showCustomConfirm('문제를 삭제하시겠습니까?');
+            // **[수정]** problem.id 대신 problem.date 사용
+            const problemDate = deleteBtn.dataset.problemDate; 
+            const confirmed = await showCustomConfirm(`${problemDate} 날짜의 문제를 삭제하시겠습니까?`);
             
             if (confirmed) {
-                const problemIndex = problems.findIndex(p => p.id === problemId);
-                if (problemIndex > -1) {
-                    problems.splice(problemIndex, 1);
-                    saveData(); // 문제 삭제 후 데이터 저장
+                showLoading(); // 로딩 시작
+                try {
+                    // **[추가]** 서버 API 호출: 문제 삭제
+                    const response = await fetch(`${API_BASE_URL}/problems/${problemDate}`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        // 관리자 인증을 위해 토큰을 사용해야 하지만, 현재는 로직 단순화를 위해 생략
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(errorText || '문제 삭제 실패');
+                    }
+                    
+                    // 삭제 성공 후, 최신 문제 목록 다시 가져오기
+                    await fetchProblems(); 
+
                     renderProblems();
                     await showCustomAlert('문제가 삭제되었습니다.');
+                    
+                } catch (error) {
+                     console.error('문제 삭제 오류:', error);
+                    await showCustomAlert(error.message || '문제 삭제 중 오류 발생');
+                } finally {
+                    hideLoading(); // 로딩 종료
                 }
             }
         }
     });
 
-    // 문제 추가 로직
+    // **[기존과 동일]** 문제 추가 폼 관련 유틸리티 함수
     const optionsContainer = document.getElementById('options-container');
     const addOptionBtn = document.getElementById('add-option-btn');
     let optionCount = 0;
@@ -566,6 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // **[핵심 수정]** 문제 추가 로직 (서버 통신 및 무한 로딩 해결)
     addProblemForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (!currentUser || !currentUser.isAdmin) {
@@ -573,25 +659,25 @@ document.addEventListener('DOMContentLoaded', () => {
              return;
         }
 
-        document.getElementById('loading-overlay').classList.remove('hidden');
+        showLoading(); // 로딩 시작
 
         try {
             const questionText = document.getElementById('problem-text').value;
             const questionImageFile = document.getElementById('problem-image-upload').files[0];
+            const problemDate = document.getElementById('problem-date').value || new Date().toISOString().split('T')[0];
 
             if (!questionText && !questionImageFile) {
                 throw new Error('문제 내용 또는 이미지를 입력해야 합니다.');
+            }
+            if (!problemDate) {
+                 throw new Error('문제가 출제될 날짜를 선택해야 합니다.');
             }
 
             const questionImage = await readFileAsDataURL(questionImageFile);
             
             const validOptionDivs = Array.from(optionsContainer.querySelectorAll('.flex.items-start')).filter(div => {
-                // 1. 옵셔널 체이닝을 사용하여 안전하게 .value에 접근합니다.
                 const text = div.querySelector('.option-text')?.value || ''; 
-
-                // 2. 파일 입력은 .files[0]으로 그대로 접근합니다. (이 요소가 null일 가능성은 적음)
                 const imageFile = div.querySelector('.option-image-upload')?.files[0];
-
                 return text || imageFile;
             });
 
@@ -617,38 +703,60 @@ document.addEventListener('DOMContentLoaded', () => {
             if (correctIndex === -1) {
                 throw new Error('선택된 정답이 유효한 선택지가 아닙니다.');
             }
-            resolvedOptions.forEach((opt, index) => {
-                opt.isCorrect = (index === correctIndex);
+            
+            // **[핵심]** 서버가 요구하는 데이터 구조로 변환
+            // question 필드에 텍스트, 이미지, 옵션 배열을 JSON 문자열로 통합하여 전송
+            const serverQuestion = JSON.stringify({
+                text: questionText, 
+                image: questionImage,
+                options: resolvedOptions // 클라이언트가 옵션 관리를 하므로, 여기에 저장
             });
-
-            const newProblem = {
-                id: problems.length > 0 ? Math.max(...problems.map(p => p.id)) + 1 : 1,
-                date: document.getElementById('problem-date').value || new Date().toISOString().split('T')[0],
-                question: { text: questionText, image: questionImage },
-                options: resolvedOptions,
-                solvers: []
+            
+            // 정답은 선택지 번호(1부터 시작)로 서버에 전송.
+            const serverAnswer = correctIndex + 1; 
+            
+            const newProblemData = {
+                date: problemDate,
+                question: serverQuestion, // 서버 모델(String)에 맞게 JSON 문자열로 전송
+                answer: serverAnswer
             };
+            
+            // **[핵심]** 서버 API 호출
+            const response = await fetch(`${API_BASE_URL}/problems`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newProblemData)
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || '문제 추가 실패');
+            }
 
-            problems.push(newProblem);
-            saveData(); // 문제 추가 후 데이터 저장
+            // 문제 추가 성공 후, 서버에서 최신 문제 목록 다시 가져오기
+            await fetchProblems(); 
+            
             await showCustomAlert('문제 추가 완료');
             showMainView('problems');
             renderProblems();
+            resetAddProblemForm();
         } catch (error) {
+            console.error('문제 추가 오류:', error);
             await showCustomAlert(error.message || '문제 추가 중 오류 발생');
         } finally {
-            document.getElementById('loading-overlay').classList.add('hidden');
+            hideLoading(); // 로딩 종료
         }
     });
 
     document.getElementById('cancel-add-problem').addEventListener('click', () => showMainView('problems'));
 
-    // 문제 풀이 모달 로직 (openProblemModal, handleAnswer, updateSolverInfo 등은 기존과 동일하게 유지)
-    const openProblemModal = (problemId) => {
-        const problem = problems.find(p => p.id === problemId);
+    // 문제 풀이 모달 로직 
+    // **[수정]** problemId 대신 problemDate 사용
+    const openProblemModal = (problemDate) => {
+        const problem = problems.find(p => p.date === problemDate);
         if (!problem) return;
 
-        problemModal.dataset.currentProblemId = problemId;
+        problemModal.dataset.currentProblemDate = problemDate;
 
         const contentDiv = document.getElementById('modal-problem-content');
         contentDiv.innerHTML = '';
@@ -661,7 +769,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const optionsContainer = document.getElementById('modal-options-container');
         optionsContainer.innerHTML = '';
-        problem.options.forEach((option, index) => {
+        
+        // **[수정]** problem.question.options 사용 (서버에서 파싱된 객체라고 가정)
+        problem.question.options.forEach((option, index) => {
             const button = document.createElement('button');
             button.className = 'block w-full text-left p-4 border rounded-lg hover:bg-gray-100 transition';
             
@@ -674,13 +784,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             button.innerHTML = optionContent;
 
-            // 사용자가 이미 풀었는지 확인
-            const alreadySolved = problem.solvers.some(s => s.userId === currentUser.id);
+            // **[수정]** problem.solvers는 서버에서 내려온 ObjectId를 가짐
+            const alreadySolved = problem.solvers.some(s => currentUser._id && s.userId === currentUser._id);
             if (alreadySolved) {
                 button.disabled = true;
                 button.classList.add('opacity-50', 'cursor-not-allowed');
             } else {
-                button.addEventListener('click', () => handleAnswer(problemId, index));
+                // **[수정]** handleAnswer에 problemDate 전달
+                button.addEventListener('click', () => handleAnswer(problemDate, index));
             }
 
             optionsContainer.appendChild(button);
@@ -691,33 +802,70 @@ document.addEventListener('DOMContentLoaded', () => {
         problemModal.classList.remove('hidden');
     };
 
-    const handleAnswer = (problemId, selectedIndex) => {
-        const problem = problems.find(p => p.id === problemId);
-        const isCorrect = problem.options[selectedIndex].isCorrect;
-        const feedbackDiv = document.getElementById('modal-feedback');
+    // **[핵심 수정]** 문제 풀이 로직 (서버 통신)
+    const handleAnswer = async (problemDate, selectedIndex) => { // async 키워드 추가
+        const problem = problems.find(p => p.date === problemDate);
+        if (!problem) return;
         
-        if (isCorrect) {
-            feedbackDiv.textContent = '정답';
-            feedbackDiv.className = 'mt-4 text-center font-bold text-green-600';
-        } else {
-            feedbackDiv.textContent = '오답';
-            feedbackDiv.className = 'mt-4 text-center font-bold text-red-600';
+        // 이미 푼 사용자인지 확인 (서버에서 처리하지만, 클라이언트에서도 사전 확인)
+        if (problem.solvers.some(s => currentUser._id && s.userId === currentUser._id)) { 
+            await showCustomAlert('이미 이 문제를 풀었습니다.');
+            return;
         }
-        
-        if (!problem.solvers.some(s => s.userId === currentUser.id)) {
-            // 정답 여부와 함께 사용자 정보를 solvers 배열에 추가
-            problem.solvers.push({ userId: currentUser.id, name: currentUser.name, isCorrect: isCorrect }); 
-            saveData(); // 문제 풀이 후 데이터 저장
+
+        showLoading(); // 로딩 시작
+
+        try {
+            // **[핵심]** 서버 API 호출: 퀴즈 제출
+            const response = await fetch(`${API_BASE_URL}/problems/${problemDate}/solve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    userId: currentUser._id, // MongoDB _id 사용
+                    answer: selectedIndex + 1 // 선택지 번호 (1부터 시작)
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || '제출 실패');
+            }
+
+            const result = await response.json(); // { success, isCorrect, newScore }
+
+            const feedbackDiv = document.getElementById('modal-feedback');
+            if (result.isCorrect) {
+                feedbackDiv.textContent = `정답! (점수: ${result.newScore})`;
+                feedbackDiv.className = 'mt-4 text-center font-bold text-green-600';
+            } else {
+                feedbackDiv.textContent = `오답! (점수: ${result.newScore})`;
+                feedbackDiv.className = 'mt-4 text-center font-bold text-red-600';
+            }
+            
+            // 문제 목록과 사용자 목록을 다시 로드하여 최신 정보 반영
+            await fetchProblems(); 
+            await fetchUsers(); 
+            
+            // 현재 사용자의 점수 및 정보 업데이트
+            await updateCurrentUser();
+            
+            // 모달 업데이트
+            const updatedProblem = problems.find(p => p.date === problemDate);
+            if (updatedProblem) updateSolverInfo(updatedProblem);
+            renderProblems();
+            
+            // 문제 풀이 후 버튼 비활성화
+            document.querySelectorAll('#modal-options-container button').forEach(btn => {
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            });
+
+        } catch (error) {
+            console.error('제출 오류:', error);
+            await showCustomAlert(`제출 실패: ${error.message}`);
+        } finally {
+            hideLoading(); // 로딩 종료
         }
-        
-        updateSolverInfo(problem);
-        renderProblems();
-        
-        // 문제 풀이 후 버튼 비활성화
-        document.querySelectorAll('#modal-options-container button').forEach(btn => {
-            btn.disabled = true;
-            btn.classList.add('opacity-50', 'cursor-not-allowed');
-        });
     };
 
     const updateSolverInfo = (problem) => {
@@ -726,11 +874,11 @@ document.addEventListener('DOMContentLoaded', () => {
          solversListUl.innerHTML = '';
          if (problem.solvers.length > 0) {
              problem.solvers.forEach(solver => {
-                 const li = document.createElement('li');
                  const resultText = solver.isCorrect 
                      ? `<span class="text-green-600 font-semibold">(⭕)</span>` 
                      : `<span class="text-red-600 font-semibold">(❌)</span>`;
 
+                 const li = document.createElement('li'); // li 변수 선언 추가
                  li.innerHTML = `${solver.name} ${resultText}`;
                  solversListUl.appendChild(li);
              });
@@ -752,20 +900,34 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('click', () => solversList.classList.add('hidden'));
 
 
-    // ===== 초기화 =====
-    const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
-        currentUser = JSON.parse(savedUser);
-        document.getElementById('user-name-display').textContent = currentUser.name;
+    // ===== 초기화 로직 (서버 데이터 로드) =====
+    const initializeApp = async () => {
+        showLoading();
+        const savedUser = localStorage.getItem('currentUser');
         
-        updateAdminUI(); // 관리자 UI 업데이트
+        if (savedUser) {
+            currentUser = JSON.parse(savedUser);
+            
+            // 서버에서 사용자 정보 최신화
+            await updateCurrentUser(); 
 
-        showScreen('main');
-        showMainView('problems');
-        renderProblems();
-        const today = new Date();
-        renderCalendar(today.getFullYear(), today.getMonth());
-    } else {
-        showScreen('nameInput');
-    }
-}); // <-- 파일의 모든 코드가 끝나면 반드시 닫아주어야 합니다.
+            // 초기 데이터 로드
+            await fetchProblems();
+            await fetchUsers();
+
+            document.getElementById('user-name-display').textContent = currentUser.name;
+            updateAdminUI(); 
+
+            showScreen('main');
+            showMainView('problems');
+            renderProblems();
+            const today = new Date();
+            renderCalendar(today.getFullYear(), today.getMonth());
+        } else {
+            showScreen('nameInput');
+        }
+        hideLoading();
+    };
+
+    initializeApp();
+});
