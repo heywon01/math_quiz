@@ -29,10 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
             problems = [];
         }
         // 관리자 계정은 항상 users 배열에 있도록 보장
-        if (!users.find(u => u.id === ADMIN_ID)) {
-             users.push({ id: ADMIN_ID, password: ADMIN_PASSWORD, name: '관리자', isAdmin: true });
-             saveData();
-        }
+        //if (!users.find(u => u.id === ADMIN_ID)) {
+             //users.push({ id: ADMIN_ID, password: ADMIN_PASSWORD, name: '관리자', isAdmin: true });
+             //saveData();
+        //}
     };
     
     // 로컬 스토리지에 데이터 저장
